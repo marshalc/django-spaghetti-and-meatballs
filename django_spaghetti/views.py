@@ -84,8 +84,13 @@ class Plate(View):
             edge_color = {'inherit': 'from'}
 
             for f in fields + many:
-                if f.rel is not None:
-                    m = f.rel.to._meta
+                rel_to = None
+                if hasattr(f, 'rel'):
+                    rel_to = f.rel.to if f.rel else None
+                elif hasattr(f, 'remote_field'):
+                    rel_to = f.remote_field.model if f.remote_field else None
+                if rel_to is not None:
+                    m = rel_to._meta
                     to_id = "%s__%s" % (m.app_label, m.model_name)
                     if to_id in excludes:
                         pass
