@@ -1,16 +1,16 @@
 from copy import deepcopy
 
-from django.contrib.contenttypes.models import ContentType
+from django.apps import apps
 from django.shortcuts import render
 
 from django.conf import settings
 from django.db.models.fields import related
 from django.template.loader import get_template
 import json
-from django.views.generic import View
+from django.views.generic import TemplateView
 
 
-class Plate(View):
+class Plate(TemplateView):
     """
     This class-based-view serves up spaghetti and meatballs.
 
@@ -41,93 +41,185 @@ class Plate(View):
     def get(self, request):
         return self.plate()
 
-    def plate(self):
-        """
-        Serves up a delicious plate with your models
-        """
-        request = self.request
+    def get_view_settings(self):
         if self.settings is None:
             graph_settings = deepcopy(getattr(settings, 'SPAGHETTI_SAUCE', {}))
             graph_settings.update(self.override_settings)
         else:
             graph_settings = self.settings
+        return graph_settings
 
-        apps = graph_settings.get('apps', [])
+    def get_apps_list(self):
+        return self.get_view_settings().get('apps', [])
 
-        excludes = [
+    def get_excluded_models(self):
+        return [
             "%s__%s" % (app, model)
-            for app, models in graph_settings.get('exclude', {}).items()
+            for app, models in self.get_view_settings().get('exclude', {}).items()
             for model in models
         ]
-        models = ContentType.objects.filter(app_label__in=apps)
-        nodes = []
-        edges = []
+
+    def get_models(self):
+        apps_list = self.get_apps_list()
+
+        excludes = self.get_excluded_models()
+
+        models = apps.get_models()
+        _models = []
         for model in models:
-            if (model.model_class() is None):
-                continue
-            model.is_proxy = model.model_class()._meta.proxy
-            if (model.is_proxy and not graph_settings.get('show_proxy', False)):
+            if (model is None):
                 continue
 
-            model.doc = model.model_class().__doc__
-            _id = "%s__%s" % (model.app_label, model.model)
+            app_label = model._meta.app_label
+            model_name = model._meta.model_name
+
+            if app_label not in apps_list:
+                continue
+
+            model.is_proxy = model._meta.proxy
+            if (model.is_proxy and not self.get_view_settings().get('show_proxy', False)):
+                continue
+
+            _id = "%s__%s" % (app_label, model_name)
             if _id in excludes:
                 continue
 
+            _models.append(model)
+
+        return _models
+
+    def get_group(self, model):
+        return model._meta.app_label
+
+    def get_colours(self):
+        return ['red', 'blue', 'green', 'yellow', 'orange']
+
+    def get_groups(self):
+        colours = self.get_colours()
+        groups = {}
+        for app, colour in zip(sorted(self.get_apps_list()), colours):
+            app_info = apps.get_app_config(app)
+            groups.update({
+                app: {
+                    "color": {
+                        'background': colour,
+                        'border': 'gray'
+                    },
+                    "data": {
+                        'name': str(app_info.verbose_name)
+                    }
+                }
+            })
+        return groups
+
+    def include_link_to_field(self, model, field):
+        return True
+
+    def generate_edge_style(self, model, field):
+        edge_style = {}
+        if str(field.name).endswith('_ptr'):
+            # fields that end in _ptr are pointing to a parent object
+            edge_style.update({
+                'arrows': {'to': {'scaleFactor': 0.75}},  # needed to draw from-to
+                'font': {'align': 'middle'},
+                'label': 'is a',
+                'dashes': True
+            })
+        elif isinstance(field, related.ForeignKey):
+            edge_style.update({
+                'arrows': {'to': {'scaleFactor': 0.75}}
+            })
+        elif isinstance(field, related.OneToOneField):
+            edge_style.update({
+                'font': {'align': 'middle'},
+                'label': '|'
+            })
+        elif isinstance(field, related.ManyToManyField):
+            edge_style.update({
+                'color': {'color': 'gray'},
+                'arrows': {'to': {'scaleFactor': 1}, 'from': {'scaleFactor': 1}},
+            })
+        return edge_style
+
+    def get_fields_for_model(self, model):
+        fields = [f for f in model._meta.fields]
+        many = [f for f in model._meta.many_to_many]
+        return fields + many
+
+    def get_link_fields_for_model(self, model):
+        return [
+            f
+            for f in self.get_fields_for_model(model)
+            if f.remote_field is not None and self.include_link_to_field(model, f)
+        ]
+
+    def get_edge_data(self, field):
+        return {
+            'from_model': str(field.model._meta.verbose_name.title()),
+            'to_model': str(field.remote_field.model._meta.verbose_name.title()),
+            'help_text': str(field.help_text),
+            # 'many_to_many': field.many_to_many,
+            # 'one_to_one': field.one_to_one,
+        }
+
+    def get_id_for_model(self, model):
+        app_label = model._meta.app_label
+        model_name = model._meta.model_name
+        return "%s__%s" % (app_label, model_name)
+
+    def get_model_display_information(self, model):
+        return model.__doc__
+
+    def plate(self):
+        """
+        Serves up a delicious plate with your models
+        """
+        request = self.request
+        graph_settings = self.get_view_settings()
+
+        excludes = self.get_excluded_models()
+
+        nodes = []
+        edges = []
+        for model in self.get_models():
+            app_label = model._meta.app_label
+            model_name = model._meta.model_name
+            model.doc = self.get_model_display_information(model)
+            _id = self.get_id_for_model(model)
+
             label = self.get_node_label(model)
 
-            fields = [f for f in model.model_class()._meta.fields]
-            many = [f for f in model.model_class()._meta.many_to_many]
+            node_fields = self.get_fields_for_model(model)
+
             if graph_settings.get('show_fields', True):
-                label += "\n%s\n" % ("-" * len(model.model))
-                label += "\n".join([str(f.name) for f in fields])
+                label += "\n%s\n" % ("-" * len(model_name))
+                label += "\n".join([str(f.name) for f in node_fields])
             edge_color = {'inherit': 'from'}
 
-            for f in fields + many:
-                rel_to = None
-                if hasattr(f, 'rel'):
-                    rel_to = f.rel.to if f.rel else None
-                elif hasattr(f, 'remote_field'):
-                    rel_to = f.remote_field.model if f.remote_field else None
-                if rel_to is not None:
-                    m = rel_to._meta
-                    to_id = "%s__%s" % (m.app_label, m.model_name)
-                    if to_id in excludes:
-                        pass
-                    elif _id == to_id and graph_settings.get('ignore_self_referential', False):
-                        pass
-                    else:
-                        if m.app_label != model.app_label:
-                            edge_color = {'inherit': 'both'}
+            for f in self.get_link_fields_for_model(model):
+                m = f.remote_field.model
+                to_id = self.get_id_for_model(f.remote_field.model)
+                if to_id in excludes:
+                    pass
+                elif _id == to_id and graph_settings.get('ignore_self_referential', False):
+                    pass
+                else:
+                    if m._meta.app_label != app_label:
+                        edge_color = {'inherit': 'both'}
 
-                        edge = {'from': _id, 'to': to_id, 'color': edge_color}
+                    edge = {
+                        'from': _id,
+                        'to': to_id,
+                        'color': edge_color,
+                        'title': f.verbose_name.title(),
+                        'data': self.get_edge_data(f)
+                    }
 
-                        if str(f.name).endswith('_ptr'):
-                            # fields that end in _ptr are pointing to a parent object
-                            edge.update({
-                                'arrows': {'to': {'scaleFactor': 0.75}},  # needed to draw from-to
-                                'font': {'align': 'middle'},
-                                'label': 'is a',
-                                'dashes': True
-                            })
-                        elif type(f) == related.ForeignKey:
-                            edge.update({
-                                'arrows': {'to': {'scaleFactor': 0.75}}
-                            })
-                        elif type(f) == related.OneToOneField:
-                            edge.update({
-                                'font': {'align': 'middle'},
-                                'label': '|'
-                            })
-                        elif type(f) == related.ManyToManyField:
-                            edge.update({
-                                'color': {'color': 'gray'},
-                                'arrows': {'to': {'scaleFactor': 1}, 'from': {'scaleFactor': 1}},
-                            })
+                    edge.update(self.generate_edge_style(model, f))
+                    edges.append(edge)
 
-                        edges.append(edge)
             if model.is_proxy:
-                proxy = model.model_class()._meta.proxy_for_model._meta
+                proxy = model._meta.proxy_for_model._meta
                 model.proxy = proxy
                 edge = {
                     'to': _id,
@@ -136,26 +228,33 @@ class Plate(View):
                 }
                 edges.append(edge)
 
-            all_node_fields = fields
-            if graph_settings.get('show_m2m_field_detail', False):
-                all_node_fields = fields + many
             nodes.append(
                 {
                     'id': _id,
                     'label': label,
                     'shape': 'box',
-                    'group': model.app_label,
+                    'group': self.get_group(model),
                     'title': get_template(self.meatball_template_name).render(
-                        {'model': model, 'fields': all_node_fields}
-                        )
+                        {'model': model, 'model_meta': model._meta, 'fields': node_fields}
+                    ),
+                    'data': self.get_extra_node_data(model)
                 }
             )
-
-        data = {
+        context = self.get_context_data()
+        context.update({
             'meatballs': json.dumps(nodes),
-            'spaghetti': json.dumps(edges)
-        }
-        return render(request, self.plate_template_name, data)
+            'spaghetti': json.dumps(edges),
+            'groups': json.dumps(self.get_groups()),
+            "pyobj": {
+                'meatballs': nodes,
+                'spaghetti': edges,
+                'groups': self.get_groups(),
+            }
+        })
+        return render(request, self.plate_template_name, context)
+
+    def get_extra_node_data(self, model):
+        return {}
 
     def get_node_label(self, model):
         """
@@ -163,9 +262,9 @@ class Plate(View):
         Default - uses verbose name, lines breaks where sensible
         """
         if model.is_proxy:
-            label = "(P) %s" % (model.name.title())
+            label = "(P) %s" % (model._meta.verbose_name.title())
         else:
-            label = "%s" % (model.name.title())
+            label = "%s" % (model._meta.verbose_name.title())
 
         line = ""
         new_label = []
@@ -179,5 +278,6 @@ class Plate(View):
         new_label.append(line)
 
         return "\n".join(new_label)
+
 
 plate = Plate.as_view()

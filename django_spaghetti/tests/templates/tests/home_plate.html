@@ -1,8 +1,30 @@
-{% block extra_scripts %}
+<html>
+  <head>
 <script src="//cdnjs.cloudflare.com/ajax/libs/vis/4.7.0/vis.min.js"></script>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.7.0/vis.min.css" rel="stylesheet" type="text/css" />
-{% endblock %}
-<div id="visualization"></div>
+</head>
+<body>
+<h1>Django Spaghetti and Meatballs Demo</h1>
+
+<ul>
+  <li>
+    <a href="{% url 'test_plate_settings' %}">Plate settings override</a>
+  </li>
+  <li>
+    <a href="{% url 'test_plate_show_m2m_field_detail' %}">M2M override test</a>
+  </li>
+  <li>
+    <a href="{% url 'test_plate_override' %}">Plate override test</a>
+  </li>
+  <li>
+    <a href="{% url 'spaghetti:plate' %}">Generic plate view</a>
+  </li>
+</ul>
+
+
+<hr>
+
+<div id="visualization" style="max-height:500px"></div>
 
 <script>
   var nodes = new vis.DataSet(
@@ -38,3 +60,5 @@
   var timeline = new vis.Network(container, data, options);
 
 </script>
+</body>
+</html>

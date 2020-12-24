@@ -1,29 +1,23 @@
-from django.core.urlresolvers import reverse
 from django.test import TestCase
-from django.test.utils import setup_test_environment
-
-setup_test_environment()
 
 
 class LoadThePlate(TestCase):
     def test_plate(self):
-        response = self.client.get("/")
-        resp_str = str(response.content)
+        response = self.client.get("/plate")
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('Officer' in resp_str)
-        self.assertTrue('All arrests made by the officer' not in resp_str)
+        self.assertContains(response, 'Officer')
+        self.assertContains(response, 'All arrests made by the officer')
 
     def test_plate_with_settings(self):
         response = self.client.get("/test/plate_settings")
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('Officer' not in str(response.content))
+        self.assertNotContains(response, 'Officer')
 
     def test_plate_show_m2m_field_detail(self):
         response = self.client.get("/test/plate_show_m2m_field_detail")
-        resp_str = str(response.content)
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('Officer' in resp_str)
-        self.assertTrue('All arrests made by the officer' in resp_str)
+        self.assertContains(response, 'Officer')
+        self.assertContains(response, 'All arrests made by the officer')
 
     def test_plate_with_override_settings(self):
         response = self.client.get("/test/plate_override")
@@ -33,14 +27,11 @@ class LoadThePlate(TestCase):
 
     def test_no_override_after_override(self):
         response1 = self.client.get("/test/plate_override")
-        response2 = self.client.get("/")
-        resp_str = str(response2.content)
+        response2 = self.client.get("/plate")
         self.assertEqual(response1.status_code, 200)
         self.assertEqual(response2.status_code, 200)
-        self.assertTrue('policeofficer' in str(response1.content).lower())
-        self.assertTrue('policestation' not in str(response1.content).lower())
-        self.assertTrue('Officer' in resp_str)
-        self.assertTrue('All arrests made by the officer' not in resp_str)
+        self.assertContains(response1, 'policeofficer')
+        self.assertNotContains(response1, 'policestation')
 
     def test_meatball(self):
         response = self.client.get("/test/plate_show_m2m_field_detail")
